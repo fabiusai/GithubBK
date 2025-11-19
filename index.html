@@ -1,0 +1,354 @@
+import React, { useState, useEffect } from 'react';
+import { Github, Download, Terminal, AlertCircle, Check, Shield, FileCode, FolderGit2, RefreshCw, Key } from 'lucide-react';
+
+export default function App() {
+  const [username, setUsername] = useState('');
+  const [token, setToken] = useState('');
+  const [repos, setRepos] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [selectedRepos, setSelectedRepos] = useState(new Set());
+  const [osType, setOsType] = useState('unix'); // 'unix' (Mac/Linux) or 'win' (Windows)
+
+  // Gestione selezione
+  const toggleRepo = (repoId) => {
+    const newSelected = new Set(selectedRepos);
+    if (newSelected.has(repoId)) {
+      newSelected.delete(repoId);
+    } else {
+      newSelected.add(repoId);
+    }
+    setSelectedRepos(newSelected);
+  };
+
+  const toggleAll = () => {
+    if (selectedRepos.size === repos.length) {
+      setSelectedRepos(new Set());
+    } else {
+      setSelectedRepos(new Set(repos.map(r => r.id)));
+    }
+  };
+
+  // Fetch Repositories
+  const fetchRepos = async () => {
+    if (!username && !token) {
+      setError("Inserisci un username o un Personal Access Token.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setRepos([]);
+    setSelectedRepos(new Set());
+
+    try {
+      let allRepos = [];
+      let page = 1;
+      let hasMore = true;
+
+      // Se c'è un token, usiamo l'endpoint user/repos (vede anche i privati)
+      // Se c'è solo username, usiamo users/USERNAME/repos (solo pubblici)
+      const baseUrl = token 
+        ? 'https://api.github.com/user/repos' 
+        : `https://api.github.com/users/${username}/repos`;
+
+      const headers = token ? { Authorization: `token ${token}` } : {};
+
+      // Fetch paginata (GitHub limita a 100 per pagina)
+      while (hasMore && page <= 5) { // Limite di sicurezza a 500 repo per evitare loop infiniti
+        const response = await fetch(`${baseUrl}?per_page=100&page=${page}&sort=updated`, { headers });
+        
+        if (!response.ok) {
+          if (response.status === 401) throw new Error("Token non valido o permessi insufficienti.");
+          if (response.status === 404) throw new Error("Utente non trovato.");
+          if (response.status === 403) throw new Error("Limite rate API raggiunto. Usa un Token.");
+          throw new Error(`Errore GitHub: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        if (data.length === 0) {
+          hasMore = false;
+        } else {
+          allRepos = [...allRepos, ...data];
+          page++;
+          if (data.length < 100) hasMore = false;
+        }
+      }
+
+      setRepos(allRepos);
+      // Seleziona tutto di default
+      setSelectedRepos(new Set(allRepos.map(r => r.id)));
+
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Generazione Script
+  const downloadScript = () => {
+    if (selectedRepos.size === 0) return;
+
+    const selectedRepoList = repos.filter(r => selectedRepos.has(r.id));
+    let content = "";
+    let filename = "";
+    let mimeType = "text/plain";
+
+    if (osType === 'win') {
+      // Windows Batch Script
+      filename = "download_repos.bat";
+      content = "@echo off\n";
+      content += "echo Inizio il download di " + selectedRepoList.length + " repository...\n\n";
+      content += "if not exist \"github_backup\" mkdir \"github_backup\"\n";
+      content += "cd \"github_backup\"\n\n";
+      
+      selectedRepoList.forEach(repo => {
+        // Inseriamo il token nell'URL se presente per clonare i privati
+        let cloneUrl = repo.clone_url;
+        if (token) {
+          cloneUrl = cloneUrl.replace("https://", `https://${token}@`);
+        }
+        content += `echo Clonazione di ${repo.name}...\n`;
+        content += `git clone ${cloneUrl}\n`;
+      });
+      
+      content += "\necho.\necho Operazione completata!\npause";
+
+    } else {
+      // Bash Script (Mac/Linux)
+      filename = "download_repos.sh";
+      content = "#!/bin/bash\n\n";
+      content += "echo \"Inizio il download di " + selectedRepoList.length + " repository...\"\n";
+      content += "mkdir -p github_backup\n";
+      content += "cd github_backup\n\n";
+
+      selectedRepoList.forEach(repo => {
+        let cloneUrl = repo.clone_url;
+        if (token) {
+          cloneUrl = cloneUrl.replace("https://", `https://${token}@`);
+        }
+        content += `echo "Clonazione di ${repo.name}..."\n`;
+        content += `git clone ${cloneUrl}\n`;
+      });
+
+      content += "\necho \"Operazione completata!\"";
+    }
+
+    // Crea e scarica il file
+    const element = document.createElement("a");
+    const file = new Blob([content], {type: mimeType});
+    element.href = URL.createObjectURL(file);
+    element.download = filename;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-slate-200 p-4 md:p-8 font-sans">
+      <div className="max-w-4xl mx-auto space-y-6">
+        
+        {/* Header */}
+        <div className="flex items-center space-x-3 mb-8">
+          <div className="bg-blue-600 p-3 rounded-lg shadow-lg shadow-blue-900/20">
+            <FolderGit2 className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold text-white">GitHub Cloner</h1>
+            <p className="text-slate-400">Genera uno script per scaricare tutti i tuoi repository in locale.</p>
+          </div>
+        </div>
+
+        {/* Configuration Panel */}
+        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 shadow-xl">
+          <div className="grid md:grid-cols-2 gap-6">
+            
+            {/* Input Fields */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">Username GitHub</label>
+                <div className="relative">
+                  <Github className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
+                  <input 
+                    type="text" 
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="es. torvalds"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1 flex items-center gap-2">
+                  Personal Access Token 
+                  <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-300">Richiesto per Login Google</span>
+                </label>
+                <div className="relative">
+                  <Shield className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
+                  <input 
+                    type="password" 
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="ghp_xxxxxxxxxxxx"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-white"
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  Necessario se usi Google Login, per repository privati o per evitare limiti API.
+                </p>
+              </div>
+
+              <button 
+                onClick={fetchRepos}
+                disabled={loading}
+                className="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                {loading ? <RefreshCw className="animate-spin w-5 h-5" /> : <Check className="w-5 h-5" />}
+                {loading ? 'Ricerca in corso...' : 'Trova Repository'}
+              </button>
+            </div>
+
+            {/* Instructions */}
+            <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700/50 text-sm text-slate-300 space-y-2">
+              <h3 className="font-semibold text-white flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-emerald-400" /> Istruzioni Rapide
+              </h3>
+              <ol className="list-decimal list-inside space-y-2 ml-1">
+                <li>Inserisci il tuo Username GitHub.</li>
+                <li className="bg-slate-800/50 p-2 rounded border border-slate-700/50 -ml-2 pl-2 mt-1">
+                  <strong className="text-white flex items-center gap-1 mb-1"><Key className="w-3 h-3 text-yellow-500" /> Accedi con Google?</strong>
+                  <span className="block text-xs text-slate-400 mb-1">La tua password Google non funziona qui.</span>
+                  <ul className="list-disc list-inside text-xs text-slate-400 ml-1 space-y-0.5">
+                     <li>Vai su <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer" className="text-blue-400 underline">Settings &rarr; Tokens (Classic)</a></li>
+                     <li>Genera token (spunta la casella <strong>repo</strong>)</li>
+                     <li>Incolla la stringa <code>ghp_...</code> qui sopra</li>
+                  </ul>
+                </li>
+                <li>Clicca "Trova Repository" e seleziona quelli desiderati.</li>
+                <li>Scarica ed esegui lo script generato.</li>
+              </ol>
+              <div className="mt-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-yellow-200 text-xs flex gap-2 items-center">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Il Token resta nel tuo browser e nello script generato. Non condividerlo.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/50 text-red-200 p-4 rounded-lg flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {/* Results Area */}
+        {repos.length > 0 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-700 pb-4">
+              <div className="flex items-center gap-4">
+                <h2 className="text-xl font-semibold text-white">Repository Trovati ({repos.length})</h2>
+                <button 
+                  onClick={toggleAll}
+                  className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
+                >
+                  {selectedRepos.size === repos.length ? 'Deseleziona tutti' : 'Seleziona tutti'}
+                </button>
+              </div>
+              
+              <div className="flex items-center gap-3 bg-slate-800 p-1 rounded-lg border border-slate-700">
+                <button 
+                  onClick={() => setOsType('win')}
+                  className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${osType === 'win' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Windows (.bat)
+                </button>
+                <button 
+                  onClick={() => setOsType('unix')}
+                  className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${osType === 'unix' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Mac/Linux (.sh)
+                </button>
+              </div>
+            </div>
+
+            {/* Repo List Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[500px] overflow-y-auto p-1 custom-scrollbar">
+              {repos.map(repo => (
+                <div 
+                  key={repo.id}
+                  onClick={() => toggleRepo(repo.id)}
+                  className={`
+                    cursor-pointer p-4 rounded-lg border transition-all duration-200 relative group
+                    ${selectedRepos.has(repo.id) 
+                      ? 'bg-blue-600/10 border-blue-500/50 shadow-lg shadow-blue-900/10' 
+                      : 'bg-slate-800 border-slate-700 hover:border-slate-600'
+                    }
+                  `}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      {repo.private ? <Shield className="w-4 h-4 text-yellow-500 shrink-0" /> : <Github className="w-4 h-4 text-slate-400 shrink-0" />}
+                      <span className="font-medium truncate text-white" title={repo.name}>{repo.name}</span>
+                    </div>
+                    <div className={`
+                      w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors
+                      ${selectedRepos.has(repo.id) ? 'bg-blue-500 border-blue-500' : 'border-slate-600 bg-slate-900'}
+                    `}>
+                      {selectedRepos.has(repo.id) && <Check className="w-3 h-3 text-white" />}
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400 truncate mb-2">{repo.description || "Nessuna descrizione"}</p>
+                  <div className="flex items-center gap-3 text-xs text-slate-500">
+                    <span className="flex items-center gap-1">
+                      <FileCode className="w-3 h-3" /> {repo.language || 'N/A'}
+                    </span>
+                    <span>{(repo.size / 1024).toFixed(1)} MB</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Download Action */}
+            <div className="sticky bottom-4 mt-6">
+              <button 
+                onClick={downloadScript}
+                disabled={selectedRepos.size === 0}
+                className={`
+                  w-full md:w-auto px-8 py-4 rounded-xl font-bold text-lg shadow-xl flex items-center justify-center gap-3 transition-transform active:scale-95 mx-auto
+                  ${selectedRepos.size > 0 
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer' 
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  }
+                `}
+              >
+                <Download className="w-6 h-6" />
+                Scarica Script ({selectedRepos.size} repo)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #1e293b;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #334155;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #475569;
+        }
+      `}</style>
+    </div>
+  );
+}
